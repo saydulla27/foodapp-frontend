@@ -1,12 +1,12 @@
 import http from "./httpAdmin";
 
 export async function listProducts(categoryId) {
-  const res = await http.get("/admin/products", { params: categoryId ? { categoryId } : {} });
+  const res = await http.get("/api/admin/products", { params: categoryId ? { categoryId } : {} });
   return res.data;
 }
 
 export async function createProduct(payload) {
-  const res = await http.post("/admin/products", payload);
+  const res = await http.post("/api/admin/products", payload);
   return res.data;
 }
 

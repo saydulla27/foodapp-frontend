@@ -1,12 +1,12 @@
 import http from "./httpAdmin";
 
 export async function listCategories() {
-  const res = await http.get("/admin/categories");
+  const res = await http.get("/api/admin/categories");
   return res.data;
 }
 
 export async function createCategory(payload) {
-  const res = await http.post("/admin/categories", payload);
+  const res = await http.post("/api/admin/categories", payload);
   return res.data;
 }
 

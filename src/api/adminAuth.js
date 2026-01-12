@@ -2,7 +2,7 @@ import http from "./httpAdmin";
 import { setAdminToken } from "../auth/adminToken";
 
 export async function adminLogin(phone, password) {
-  const res = await http.post("/admin/auth/login", {
+  const res = await http.post("/api/admin/auth/login", {
     phone: String(phone || "").trim(),
     password,
   });

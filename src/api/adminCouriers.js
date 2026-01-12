@@ -1,12 +1,12 @@
 import http from "./httpAdmin";
 
 export async function listCouriers() {
-  const res = await http.get("/admin/couriers");
+  const res = await http.get("/api/admin/couriers");
   return res.data;
 }
 
 export async function upsertCourier(payload) {
-  const res = await http.post("/admin/couriers", payload);
+  const res = await http.post("/api/admin/couriers", payload);
   return res.data;
 }
 

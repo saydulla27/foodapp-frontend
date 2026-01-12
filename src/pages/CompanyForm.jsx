@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import Layout from "../components/Layout";
 import Toast from "../components/Toast";
 import FormField from "../components/FormField";
@@ -7,15 +7,18 @@ import { createCompany, getCompany, updateCompany, setCustomerBotWebhook } from 
 
 const empty = {
   name: "",
+  active: true,
   adminPhone: "",
   adminPassword: "",
   customerBotToken: "",
   courierBotToken: "",
+  customerWebhookSecret: "",
   courierWebhookSecret: "",
   aboutText: "",
   branchLat: "",
   branchLng: "",
-  active: true,
+  webAppUrl: "",
+  publicBaseUrl: "",
 };
 
 export default function CompanyForm() {
@@ -24,12 +27,20 @@ export default function CompanyForm() {
   const isEdit = useMemo(() => Boolean(id), [id]);
 
   const [model, setModel] = useState(empty);
+
+  // Ngrok / public base URL (webhook set qilish uchun).
+  // 1) .env dagi VITE_PUBLIC_BASE_URL 2) localStorage dagi oxirgi qiymat
+  useEffect(() => {
+    const saved = localStorage.getItem("foodapp_public_base_url") || "";
+    const env = import.meta.env.VITE_PUBLIC_BASE_URL || "";
+    const v = (saved || env || "").trim();
+    if (v) setModel((p) => ({ ...p, publicBaseUrl: v }));
+  }, []);
   const [toast, setToast] = useState({ type: "info", text: "" });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!isEdit) return;
-
     (async () => {
       setLoading(true);
       try {
@@ -37,14 +48,13 @@ export default function CompanyForm() {
         setModel({
           ...empty,
           ...data,
-          // normalize optional fields
-          aboutText: data.aboutText || data.about || "",
+          aboutText: data.aboutText || "",
           branchLat: data.branchLat == null ? "" : String(data.branchLat),
           branchLng: data.branchLng == null ? "" : String(data.branchLng),
-          courierWebhookSecret: data.courierWebhookSecret || "",
-          customerBotToken: data.customerBotToken || "",
-          courierBotToken: data.courierBotToken || "",
-          adminPhone: data.adminPhone || "",
+          webAppUrl: data.webAppUrl || "",
+          customerBotToken: "",
+          courierBotToken: "",
+          customerWebhookSecret: data.customerWebhookSecret || data.webhookSecret || "",
         });
       } catch (err) {
         setToast({ type: "error", text: err?.response?.data?.message || err?.message || "Company load xato" });
@@ -58,41 +68,42 @@ export default function CompanyForm() {
     setModel((p) => ({ ...p, [k]: v }));
   }
 
-  async function onSubmit(e) {
+  async function save(e) {
     e.preventDefault();
+    setToast({ type: "info", text: "" });
     setLoading(true);
     try {
+      if (!model.name.trim()) throw new Error("Name majburiy");
       const payload = {
-        name: model.name?.trim(),
-        adminPhone: model.adminPhone?.trim(),
-        adminPassword: model.adminPassword,
-        customerBotToken: (model.customerBotToken || "").trim(),
-        courierBotToken: (model.courierBotToken || "").trim(),
-        courierWebhookSecret: (model.courierWebhookSecret || "").trim(),
-        aboutText: model.aboutText || "",
+        name: model.name,
+        active: Boolean(model.active),
+        adminPhone: model.adminPhone || null,
+        adminPassword: model.adminPassword || null,
+        customerBotToken: model.customerBotToken || null,
+        courierBotToken: model.courierBotToken || null,
+        customerWebhookSecret: model.customerWebhookSecret || null,
+        courierWebhookSecret: model.courierWebhookSecret || null,
+        aboutText: model.aboutText || null,
         branchLat: model.branchLat === "" ? null : Number(model.branchLat),
         branchLng: model.branchLng === "" ? null : Number(model.branchLng),
-        active: Boolean(model.active),
+        webAppUrl: model.webAppUrl || null,
       };
+      const savedCompany = isEdit ? await updateCompany(id, payload) : await createCompany(payload);
 
-      if (!payload.name) throw new Error("Name required");
-      if (!payload.adminPhone) throw new Error("Admin phone required");
-      if (!payload.adminPassword) throw new Error("Admin password required");
-      if (!payload.customerBotToken) throw new Error("Customer bot token required");
+      // Agar Customer Bot Token bor bo'lsa, webhook'ni avtomatik set qilamiz
+      const companyId = isEdit ? id : savedCompany?.id;
+      const publicBaseUrl = (model.publicBaseUrl || "").trim();
 
-      if (isEdit) {
-        await updateCompany(id, payload);
-        // webhook doimiy URL/secret bilan avtomatik, lekin token o'zgarsa qayta set qilish kerak bo'lishi mumkin
-        await setCustomerBotWebhook(id);
-        setToast({ type: "success", text: "Updated + webhook set" });
-      } else {
-        const created = await createCompany(payload);
-        if (created?.id) {
-          await setCustomerBotWebhook(created.id);
-        }
-        setToast({ type: "success", text: "Created + webhook set" });
-        nav("/superadmin/companies");
+      if (publicBaseUrl) {
+        localStorage.setItem("foodapp_public_base_url", publicBaseUrl);
       }
+
+      if (payload.customerBotToken && companyId && publicBaseUrl) {
+        await setCustomerBotWebhook(companyId, publicBaseUrl);
+      }
+
+      setToast({ type: "success", text: "Saved" });
+      nav("/superadmin/companies");
     } catch (err) {
       setToast({ type: "error", text: err?.response?.data?.message || err?.message || "Save xato" });
     } finally {
@@ -100,63 +111,177 @@ export default function CompanyForm() {
     }
   }
 
+  async function setWebhook() {
+    setToast({ type: "info", text: "" });
+    setLoading(true);
+    try {
+      const fallback = (localStorage.getItem("foodapp_public_base_url") || import.meta.env.VITE_PUBLIC_BASE_URL || "").trim();
+      const publicBaseUrl = (fallback || window.prompt("Ngrok public URL ni kiriting (https://xxxx.ngrok-free.app)", "") || "").trim();
+      if (!publicBaseUrl) throw new Error("Public URL kerak (ngrok)");
+      localStorage.setItem("foodapp_public_base_url", publicBaseUrl);
+      const data = await setCustomerBotWebhook(id, publicBaseUrl);
+      setToast({ type: "success", text: "Webhook set: " + data.webhookUrl });
+    } catch (err) {
+      setToast({ type: "error", text: err?.response?.data?.message || err?.message || "Webhook xato" });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
   return (
-    <Layout title={isEdit ? "Edit Company" : "New Company"} right={<Link className="btn" to="/superadmin/companies">Back</Link>}>
+    <Layout>
       <Toast type={toast.type} text={toast.text} onClose={() => setToast({ type: "info", text: "" })} />
 
-      <form onSubmit={onSubmit} className="space-y-5 max-w-5xl">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-lg font-semibold text-slate-900">
+            {isEdit ? "Edit Company" : "New Company"}
+          </div>
+          <div className="text-sm text-slate-500">Bot tokenlar va webhook secret shu yerda.</div>
+        </div>
+
+        <Link
+          to="/superadmin/companies"
+          className="rounded-2xl border bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Back
+        </Link>
+      </div>
+
+      <form onSubmit={save} className="mt-4 grid gap-4 rounded-3xl border bg-white p-6 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormField label="Name">
-            <input className="input" value={model.name} onChange={(e) => setField("name", e.target.value)} />
+            <input className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.name} onChange={(e) => setField("name", e.target.value)} />
           </FormField>
 
-          <FormField label="Admin Phone" hint="Format: 998901234567">
-            <input className="input" value={model.adminPhone} onChange={(e) => setField("adminPhone", e.target.value)} />
+
+          <FormField label="Admin Phone">
+            <input
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="+998901234567"
+              value={model.adminPhone}
+              onChange={(e) => setField("adminPhone", e.target.value)}
+              required={!isEdit}
+            />
           </FormField>
 
           <FormField label="Admin Password">
-            <input className="input" type="password" value={model.adminPassword} onChange={(e) => setField("adminPassword", e.target.value)} />
+            <input
+              type="password"
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.adminPassword}
+              onChange={(e) => setField("adminPassword", e.target.value)}
+              required={!isEdit}
+            />
+          </FormField>
+<FormField label="Customer Bot Token">
+            <input className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.customerBotToken} onChange={(e) => setField("customerBotToken", e.target.value)} />
           </FormField>
 
-          <FormField label="Customer Bot Token" hint="@BotFather token">
-            <input className="input" value={model.customerBotToken} onChange={(e) => setField("customerBotToken", e.target.value)} />
+          <FormField label="Public Base URL (ngrok)">
+            <input
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="https://xxxx.ngrok-free.app"
+              value={model.publicBaseUrl}
+              onChange={(e) => setField("publicBaseUrl", e.target.value)}
+            />
+            <div className="mt-1 text-xs text-slate-500">
+              Bot webhook avtomatik set bo'lishi uchun shu yerga ngrok URL kiriting.
+            </div>
           </FormField>
 
-          <FormField label="Courier Bot Token (optional)">
-            <input className="input" value={model.courierBotToken} onChange={(e) => setField("courierBotToken", e.target.value)} />
+          <FormField label="WebApp URL (Telegram Mini App)">
+            <input
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="https://example.com/foodapp"
+              value={model.webAppUrl}
+              onChange={(e) => setField("webAppUrl", e.target.value)}
+            />
+            <div className="mt-1 text-xs text-slate-500">
+              Botdagi 🍟 Buyurtma / 🛒 Savat tugmalari shu URL orqali WebApp oynani ochadi.
+            </div>
           </FormField>
 
-          <FormField label="Courier Webhook Secret (optional)">
-            <input className="input" value={model.courierWebhookSecret} onChange={(e) => setField("courierWebhookSecret", e.target.value)} />
+          <FormField label="Courier Bot Token">
+            <input className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.courierBotToken} onChange={(e) => setField("courierBotToken", e.target.value)} />
+          </FormField>
+
+          <FormField label="Customer Webhook Secret">
+            <input className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.customerWebhookSecret} onChange={(e) => setField("customerWebhookSecret", e.target.value)} />
+          </FormField>
+
+          <FormField label="Courier Webhook Secret">
+            <input className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={model.courierWebhookSecret} onChange={(e) => setField("courierWebhookSecret", e.target.value)} />
+          </FormField>
+
+          <FormField label="Active">
+            <select className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              value={String(model.active)}
+              onChange={(e) => setField("active", e.target.value === "true")}
+            >
+              <option value="true">true</option>
+              <option value="false">false</option>
+            </select>
           </FormField>
 
           <FormField label="Biz haqimizda (About)">
-            <textarea className="input min-h-[120px]" value={model.aboutText} onChange={(e) => setField("aboutText", e.target.value)} />
+            <textarea
+              className="w-full min-h-28 rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="Company haqida qisqa matn..."
+              value={model.aboutText}
+              onChange={(e) => setField("aboutText", e.target.value)}
+            />
+            <div className="mt-1 text-xs text-slate-500">
+              Botdagi “ℹ️ Biz haqimizda” shu matnni chiqaradi.
+            </div>
           </FormField>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <FormField label="Filial lokatsiyasi (Latitude) (optional)">
-              <input className="input" value={model.branchLat} onChange={(e) => setField("branchLat", e.target.value)} />
-            </FormField>
+          <FormField label="Filial lokatsiyasi (ixtiyoriy) - Latitude">
+            <input
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="41.311081"
+              value={model.branchLat}
+              onChange={(e) => setField("branchLat", e.target.value)}
+            />
+          </FormField>
 
-            <FormField label="Filial lokatsiyasi (Longitude) (optional)">
-              <input className="input" value={model.branchLng} onChange={(e) => setField("branchLng", e.target.value)} />
-            </FormField>
-
-            <FormField label="Active">
-              <select className="input" value={String(model.active)} onChange={(e) => setField("active", e.target.value === "true")}>
-                <option value="true">true</option>
-                <option value="false">false</option>
-              </select>
-            </FormField>
-          </div>
+          <FormField label="Filial lokatsiyasi (ixtiyoriy) - Longitude">
+            <input
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-200"
+              placeholder="69.240562"
+              value={model.branchLng}
+              onChange={(e) => setField("branchLng", e.target.value)}
+            />
+            <div className="mt-1 text-xs text-slate-500">
+              Botdagi “🏠 Barcha filiallar” lokatsiya yuboradi.
+            </div>
+          </FormField>
         </div>
 
-        <div className="flex gap-2">
-          <button className="btn btn-primary" type="submit" disabled={loading}>
-            {loading ? "Saving..." : "Save"}
-          </button>
-        </div>
+        {(model.customerBotToken && (isEdit || model.publicBaseUrl)) && (
+        <button
+          type="button"
+          onClick={setWebhook}
+          disabled={loading}
+          className="rounded-2xl border px-4 py-3 text-sm font-semibold text-slate-900 hover:bg-slate-50 disabled:opacity-60"
+        >
+          Set Customer Webhook
+        </button>
+      )}
+
+        <button
+          className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+          disabled={loading}
+          type="submit"
+        >
+          {loading ? "Saving..." : "Save"}
+        </button>
       </form>
     </Layout>
   );

@@ -1,7 +1,7 @@
 import http from "./httpAdmin";
 
 export async function listOrders() {
-  const res = await http.get("/admin/orders");
+  const res = await http.get("/api/admin/orders");
   return res.data;
 }
 
@@ -11,7 +11,7 @@ export async function getOrder(id) {
 }
 
 export async function listOrdersByStatus(status) {
-  const res = await http.get("/admin/orders/by-status", { params: { status } });
+  const res = await http.get("/api/admin/orders/by-status", { params: { status } });
   return res.data;
 }
 
